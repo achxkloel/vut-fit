@@ -1,0 +1,420 @@
+#!/bin/sh
+
+##
+# File:        tradelog
+# Project:     IOS-1
+# Author:      Evgeny Torbin
+# Date:        04.04.2021
+# Description: stock market log analyzer
+##
+
+##
+# Environment variables
+##
+
+export POSIXLY_CORRECT="yes"
+export LC_NUMERIC="en_US.UTF-8"
+export LC_ALL="C"
+
+##
+# Functions
+##
+
+# Prints a help information
+print_help()
+{
+    echo "Usage: tradelog [-h|--help] [FILTER] [COMMAND] [LOG [LOG2 [...]]"
+    echo
+    echo "Stock market log analyzer."
+    echo "Filter records from the stock trading tool."
+    echo
+    echo " Filters:"
+    echo "  -a DATETIME                after: only records after this date are considered"
+    echo "                             (without this date). DATETIME is in the format"
+    echo "                             YYYY-MM-DD HH:MM:SS"
+    echo "  -b DATETIME                before: only records before this date"
+    echo "                             are considered (without this date)"
+    echo "  -t TICKER                  only records corresponding to the given ticker"
+    echo "                             are considered. With multiple occurrences"
+    echo "                             of this filter, uses all of taken tickers"
+    echo "  -w WIDTH                   sets the width of graph"
+    echo "                             (length of the longest line) to WIDTH."
+    echo "                             WIDTH must be a positive integer."
+    echo "                             Multiple occurrences of this filter are not allowed"
+    echo
+    echo " Commands:"
+    echo "  list-tick                  list of occurring stock exchange symbols"
+    echo "                             called \“tickers\”"
+    echo "  profit                     list of total profit from closed positions"
+    echo "  pos                        list of values of currently held positions"
+    echo "                             sorted in descending order by value"
+    echo "  last-price                 list of last known price for each ticker"
+    echo "  hist-ord                   histogram of the number of transactions"
+    echo "                             sorted in descending order by ticker"
+    echo "  graph-pos                  graph of values of currently held positions"
+    echo "                             sorted in descending order by ticker"
+    echo
+    echo "  -h, --help                 print help with a brief description of each command and filter"
+    exit 0
+}
+
+# Prints an error message by the error code
+print_error()
+{
+    case "$ERR_CODE" in
+        BAD_ARGUMENT)
+            echo "$ERR_PREFIX wrong arguments"
+            ;;
+        WIDTH_NOT_NUMBER)
+            echo "$ERR_PREFIX width filer is not an integer"
+            ;;
+        WIDTH_NOT_POSITIVE)
+            echo "$ERR_PREFIX width filter must be positive"
+            ;;
+        TOO_MANY_COMMANDS)
+            echo "$ERR_PREFIX too many commands"
+            ;;
+        INCORRECT_FILE)
+            echo "$ERR_PREFIX some files do not exist"
+            ;;
+        TOO_MANY_WIDTH)
+            echo "$ERR_PREFIX width filter appears more than once"
+            ;;
+    esac
+    exit 1
+}
+
+##
+# Variables
+##
+
+ERR_PREFIX="tradelog:"
+ERR_CODE=0
+SHIFT="single"
+LINE_SEPARATOR=";"
+
+DATETIME_BEFORE="9999-99-99 99:99:99"
+DATETIME_AFTER=""
+TICKERS=""
+WIDTH=""
+COMMAND=""
+LOG_FILES=""
+GZ_FILES=""
+
+##
+# Parse arguments
+##
+
+while [ $# -ne 0 ]
+do
+    case "$1" in
+        # Read filters
+        -a)
+            DATETIME_AFTER="$2"
+            SHIFT="double"
+            ;;
+        -b)
+            DATETIME_BEFORE="$2"
+            SHIFT="double"
+            ;;
+        -t)
+            TICKERS="$2 $TICKERS"
+            SHIFT="double"
+            ;;
+        -w)
+            if [ -n "$WIDTH" ]
+            then
+                ERR_CODE="TOO_MANY_WIDTH"
+                print_error
+            else
+                if [ -n "$2" ] && [ "$2" -eq "$2" ] 2>/dev/null
+                then
+                    if [ "$2" -lt "0" ]
+                    then
+                        ERR_CODE="WIDTH_NOT_POSITIVE"
+                        print_error
+                    else
+                        WIDTH="$2"
+                        SHIFT="double"
+                    fi
+                else
+                    ERR_CODE="WIDTH_NOT_NUMBER"
+                    print_error
+                fi
+            fi
+            ;;
+
+        # Read command
+        list-tick | profit | pos | last-price | hist-ord | graph-pos)
+            # Check if command exists
+            if [ -n "$COMMAND" ]
+            then
+                ERR_CODE="TOO_MANY_COMMANDS"
+                print_error
+            else
+                COMMAND="$1"
+            fi
+            ;;
+
+        # Read logs
+        *.log)
+            if [ -f "$1" ]
+            then
+                LOG_FILES="$1 $LOG_FILES"
+            else
+                ERR_CODE="INCORRECT_FILE"
+                print_error
+            fi
+            ;;
+        *.gz)
+            if [ -f "$1" ]
+            then
+                GZ_FILES="$1 $GZ_FILES"
+            else
+                ERR_CODE="INCORRECT_FILE"
+                print_error
+            fi
+            ;;
+
+        # Read help
+        -h | --help)
+            print_help
+            ;;
+
+        # Unknown argument
+        *)
+            ERR_CODE="BAD_ARGUMENT"
+            print_error
+            ;;
+    esac
+
+    # Shift arguments
+    if [ "$SHIFT" = "single" ]; then shift; else shift; shift; SHIFT="single"; fi
+done
+
+##
+# Read content
+##
+
+if [ -n "$GZ_FILES" ]
+then
+    INPUT="gunzip -c $GZ_FILES | cat $LOG_FILES -"
+elif [ -n "$LOG_FILES" ]
+then
+    INPUT="cat $LOG_FILES"
+else
+    INPUT="cat -"
+fi
+
+##
+# Set filters
+##
+
+FILTERS=" \
+awk \
+-F '$LINE_SEPARATOR' \
+-v date_a=\"$DATETIME_AFTER\" \
+-v date_b=\"$DATETIME_BEFORE\" \
+-v tickers=\"$TICKERS\" \
+'
+BEGIN \
+{
+    split(tickers, tickers_array, \" \");
+    for (i in tickers_array)
+        tickers_array[tickers_array[i]]=\"\"
+}
+{
+    if (\$1 > date_a && \$1 < date_b && (\$2 in tickers_array || tickers == \"\"))
+        print \$0;
+}
+' \
+| sort \
+"
+
+##
+# Command definition
+##
+
+# Prints list of all tickers
+LIST_TICK=" \
+awk \
+-F '$LINE_SEPARATOR' \
+'
+{
+    tickers_array[\$2] = \"\";
+}
+END \
+{
+    for (i in tickers_array)
+        printf \"%s\n\", i;
+}
+' \
+| sort \
+"
+
+# Prints a total profit from closed positions
+PROFIT=" \
+awk \
+-F '$LINE_SEPARATOR' \
+'
+{
+    if (\$3 == \"sell\")
+        profit += \$4*\$6;
+    else
+        profit -= \$4*\$6;
+}
+END { printf \"%.2f\n\", profit }
+' \
+"
+
+# Prints list of values of currently held positions
+POS=" \
+awk \
+-F '$LINE_SEPARATOR' \
+'
+{
+    tickers_price[\$2] = \$4;
+    if (\$3 == \"sell\")
+        transactions[\$2] -= \$6;
+    else
+        transactions[\$2] += \$6;
+}
+END \
+{
+    for (i in tickers_price)
+    {
+        tickers_pos[i] = transactions[i] * tickers_price[i];
+        pos_string = sprintf(\"%.2f\", tickers_pos[i]);
+        pos_length = length(pos_string);
+        if (pos_length > max_length)
+            max_length = pos_length;
+    }
+    for (i in tickers_price)
+        printf \"%-10s: %*.2f\n\", i, max_length, tickers_pos[i];
+}
+' \
+| sort -t ':' -k '2' -n -r \
+"
+
+# Prints last price
+LAST_PRICE=" \
+awk \
+-F '$LINE_SEPARATOR' \
+'
+{
+    tickers_price[\$2] = \$4;
+}
+END \
+{
+    for (i in tickers_price)
+    {
+        price_string = sprintf(\"%.2f\", tickers_price[i]);
+        price_length = length(price_string);
+        if (price_length > max_length)
+            max_length = price_length;
+    }
+    for (i in tickers_price)
+        printf \"%-10s: %*.2f\n\", i, max_length, tickers_price[i];
+}
+' \
+| sort -t ':' -k '1' \
+"
+
+# Prints histogram of transactions
+HIST_ORD=" \
+awk \
+-F '$LINE_SEPARATOR' \
+-v width=\"$WIDTH\" \
+'
+{
+    tickers_array[\$2]++;
+    if (tickers_array[\$2] > max_value)
+        max_value = tickers_array[\$2];
+}
+END \
+{
+    for (i in tickers_array)
+    {
+        limit = tickers_array[i];
+        if (width != \"\")
+            limit = int(tickers_array[i] * width / max_value);
+        hist = \"\";
+        for (j = 0; j < limit; j++)
+        {
+            if (j == 0)
+                hist=\" \";
+            hist = hist \"#\";
+        }
+        printf \"%-10s:%s\n\", i, hist;
+    }
+}
+' \
+| sort -t ':' -k '1' \
+"
+
+# Prints graph of values of currently held positions
+GRAPH_POS=" \
+awk \
+-F '$LINE_SEPARATOR' \
+-v width=\"$WIDTH\" \
+'
+function abs (num)
+{
+    return (num < 0) ? -num : num;
+}
+{
+    tickers_price[\$2] = \$4;
+    if (\$3 == \"sell\")
+        transactions[\$2] -= \$6;
+    else
+        transactions[\$2] += \$6;
+}
+END \
+{
+    for (i in tickers_price)
+    {
+        tickers_pos[i] = transactions[i] * tickers_price[i];
+        if (abs(tickers_pos[i]) > max_value)
+            max_value = abs(tickers_pos[i]);
+    }
+    for (i in tickers_price)
+    {
+        char=\"#\";
+        if (tickers_pos[i] < 0)
+            char=\"!\";
+        limit = int(abs(tickers_pos[i]) / 1000);
+        if (width != \"\")
+            limit = int(abs(tickers_pos[i]) * width / max_value);
+        graph=\"\";
+        for (j = 0; j < limit; j++)
+        {
+            if (j == 0)
+                graph=\" \";
+            graph=graph char;
+        }
+        printf \"%-10s:%s\n\", i, graph;
+    }
+}
+' \
+| sort -t ':' -k '1' \
+"
+
+##
+# Script execution
+##
+
+# Choose command to execute
+if    [ "$COMMAND" = "list-tick" ];   then COMMAND_EXECUTE="$LIST_TICK";
+elif  [ "$COMMAND" = "profit" ];      then COMMAND_EXECUTE="$PROFIT";
+elif  [ "$COMMAND" = "pos" ];         then COMMAND_EXECUTE="$POS";
+elif  [ "$COMMAND" = "last-price" ];  then COMMAND_EXECUTE="$LAST_PRICE";
+elif  [ "$COMMAND" = "hist-ord" ];    then COMMAND_EXECUTE="$HIST_ORD";
+elif  [ "$COMMAND" = "graph-pos" ];   then COMMAND_EXECUTE="$GRAPH_POS"; fi
+
+# Run
+if [ -n "$COMMAND" ]
+then
+    eval "$INPUT | $FILTERS | $COMMAND_EXECUTE"
+else
+    eval "$INPUT | $FILTERS"
+fi
