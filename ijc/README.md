@@ -51,13 +51,13 @@ bitset_alloc(jmeno_pole,velikost)
 bitset_free(jmeno_pole)
 ```
 ```
-uvolní paměť dynamicky (bitset_alloc) alokovaného pole
+  uvolní paměť dynamicky (bitset_alloc) alokovaného pole
 ```
 ```c
 bitset_size(jmeno_pole)
 ```
 ```
-vrátí deklarovanou velikost pole v bitech (uloženou v poli)
+  vrátí deklarovanou velikost pole v bitech (uloženou v poli)
 ```
 ```c
 bitset_setbit(jmeno_pole,index,výraz)
@@ -260,13 +260,13 @@ C) Obecné pokyny pro vypracování domácích úkolů (rev 18.2.2020)
 *  Na začátek každého souboru napište poznámku, která bude
    obsahovat jméno, fakultu, označení příkladu a datum.
 ```
-   Příklad:
-   // primes.c
-   // Řešení IJC-DU1, příklad a), 20.3.2111
-   // Autor: Jára Cimrman, FIT
-   // Přeloženo: gcc 8.3
-   // ...popis příkladu - poznámky, omezení, atd
- ```
+Příklad:
+// primes.c
+// Řešení IJC-DU1, příklad a), 20.3.2111
+// Autor: Jára Cimrman, FIT
+// Přeloženo: gcc 8.3
+// ...popis příkladu - poznámky, omezení, atd
+```
  
 * Úkoly je nutné zabalit programem zip takto:
        zip xnovak99.zip *.c *.h Makefile
